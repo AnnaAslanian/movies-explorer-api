@@ -2,66 +2,47 @@ require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const helmet = require('helmet');
-const cookieParser = require('cookie-parser');
-const { celebrate, Joi, errors } = require('celebrate');
+const { errors } = require('celebrate');
 const cors = require('cors');
-const handleError = require('./middlewares/errors');
-const NotFoundError = require('./errors/NotFoundError');
+const routes = require('./routes');
+const { PORT, URL } = require('./utils/config');
+const limiter = require('./middlewares/rateLimiter');
 const { requestLogger, errorLogger } = require('./middlewares/logger');
-const { limiter } = require('./utils/limiter');
+const errorHandler = require('./middlewares/errorHandler');
+
+mongoose.set('strictQuery', true);
+
+mongoose
+  .connect(URL)
+  .then(() => {
+    console.log('БД подключена');
+  })
+  .catch(() => {
+    console.log('Не удалось подключиться к БД');
+  });
 
 const app = express();
 
-mongoose.connect('mongodb://127.0.0.1:27017/bitfilmsdb', { family: 4 });
-const { createUser, login, signout } = require('./controllers/users');
-const auth = require('./middlewares/auth');
-const usersRouter = require('./routes/users');
-const moviesRouter = require('./routes/movies');
-
-app.use(express.json());
-app.use(helmet());
-app.use(cookieParser());
-
-app.use(limiter);
-app.use(requestLogger);
-
-const allowedCors = ['https://diplom.students.nomoreparties.co', 'http://localhost:3000'];
+const allowedCors = ['https://diplom.students.nomoreparties.co', 'https://localhost:3000', 'http://localhost:3001'];
 
 const corsOptions = {
   origin: allowedCors,
   optionsSuccessStatus: 200,
   credentials: true,
 };
+
 app.use(cors(corsOptions));
+app.use(helmet());
+app.use(limiter);
 
-app.post('/signup', celebrate({
-  body: Joi.object().keys({
-    email: Joi.string().required().email(),
-    password: Joi.string().required().min(8),
-    name: Joi.string().min(2).max(30),
-  }),
-}), createUser);
-
-app.post('/signin', celebrate({
-  body: Joi.object().keys({
-    email: Joi.string().required().email(),
-    password: Joi.string().required().min(8),
-  }),
-}), login);
-
-app.use(auth);
-app.post('/signout', signout);
-app.use('/users', usersRouter);
-app.use('/movies', moviesRouter);
-
-app.use('*', (req, res, next) => {
-  next(new NotFoundError('Страница не найдена'));
-});
-
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
+app.use(requestLogger);
+app.use(routes);
 app.use(errorLogger);
 app.use(errors());
-app.use(handleError);
+app.use(errorHandler);
 
-app.listen(3000, () => {
+app.listen(PORT, () => {
   console.log('Сервер запущен!');
 });

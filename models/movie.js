@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
-const validator = require('validator');
+const { INCORRECT_URL_FORMAT } = require('../utils/constants');
+const { URL_REGEX } = require('../middlewares/validation');
 
 const movieSchema = new mongoose.Schema({
   country: {
@@ -26,28 +27,29 @@ const movieSchema = new mongoose.Schema({
     type: String,
     required: true,
     validate: {
-      validator: (v) => validator.isURL(v),
-      message: 'Некорректный URL',
+      validator: (url) => URL_REGEX.test(url),
+      message: INCORRECT_URL_FORMAT,
     },
   },
   trailerLink: {
     type: String,
     required: true,
     validate: {
-      validator: (v) => validator.isURL(v),
-      message: 'Некорректный URL',
+      validator: (url) => URL_REGEX.test(url),
+      message: INCORRECT_URL_FORMAT,
     },
   },
   thumbnail: {
     type: String,
     required: true,
     validate: {
-      validator: (v) => validator.isURL(v),
-      message: 'Некорректный URL',
+      validator: (url) => URL_REGEX.test(url),
+      message: INCORRECT_URL_FORMAT,
     },
   },
   owner: {
     type: mongoose.Schema.Types.ObjectId,
+    ref: 'user',
     required: true,
   },
   movieId: {
@@ -65,5 +67,4 @@ const movieSchema = new mongoose.Schema({
 });
 
 const Movie = mongoose.model('movie', movieSchema);
-
 module.exports = Movie;

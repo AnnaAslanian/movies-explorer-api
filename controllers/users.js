@@ -1,133 +1,109 @@
-const { NODE_ENV, JWT_SECRET } = process.env;
+require('dotenv').config();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const User = require('../models/user');
-const BadRequestError = require('../errors/BedRequestError');
-const UnauthorizerError = require('../errors/UnauthorizerError');
+const { SECRET_KEY } = require('../utils/config');
+
+const {
+  HTTP_STATUS_CREATED,
+  USER_NOT_FOUND,
+  INCORRECT_USER_DATA,
+  INCORRECT_UPDATE_USER_DATA,
+  EMAIL_ALREADY_REGISTERED,
+  INCORRECT_ADD_USER_DATA,
+} = require('../utils/constants');
+
 const NotFoundError = require('../errors/NotFoundError');
-const ConflictingError = require('../errors/ConflictingError');
+const BadRequestError = require('../errors/BadRequestError');
+const ConflictingError = require('../errors/ConflictError');
 
-const OK = 200;
-const CREATED = 201;
+const checkData = (data) => {
+  if (!data) throw new NotFoundError(USER_NOT_FOUND);
+};
 
-const createUser = (req, res, next) => {
+const registrationUser = (req, res, next) => {
   const {
-    email,
-    password,
-    name,
+    name, email, password,
   } = req.body;
 
-  bcrypt.hash(String(password), 10)
-    .then((hashedPassword) => {
-      User.create({
+  bcrypt.hash(password, 10)
+    .then((hash) => User.create({
+      name, email, password: hash,
+    }))
+    .then((user) => {
+      const { _id } = user;
+      return res.status(HTTP_STATUS_CREATED).send({
         email,
-        password: hashedPassword,
         name,
-      })
-        .then((user) => {
-          res.status(CREATED).send({
-            name: user.name,
-            email: user.email,
-            _id: user._id,
-          });
-        })
-        .catch((error) => {
-          if (error.name === 'ValidationError') {
-            next(new BadRequestError('Переданы некорректные данные при создании пользователя'));
-          } else if (error.code === 11000) {
-            next(new ConflictingError('Пользователь с таким EMAIL уже существует'));
-          } else {
-            next(error);
-          }
-        });
+        _id,
+      });
+    })
+    .catch((err) => {
+      if (err.code === 11000) {
+        return next(new ConflictingError(EMAIL_ALREADY_REGISTERED));
+      }
+      if (err.name === 'ValidationError') {
+        return next(new BadRequestError(INCORRECT_ADD_USER_DATA));
+      }
+      return next(err);
+    });
+};
+
+const getCurrentUserInfo = (req, res, next) => {
+  const userId = req.user._id;
+  User.findById(userId)
+    .then((user) => {
+      checkData(user);
+      return res.send(user);
+    })
+    .catch((err) => {
+      if (err.name === 'CastError') {
+        return next(new BadRequestError(INCORRECT_USER_DATA));
+      }
+      return next(err);
+    });
+};
+
+const editProfileUserInfo = (req, res, next) => {
+  const { _id } = req.user;
+  const { name, email } = req.body;
+  User.findByIdAndUpdate(_id, { name, email }, {
+    new: true,
+    runValidators: true,
+  })
+    .then((user) => {
+      checkData(user);
+      res.send(user);
+    })
+    .catch((err) => {
+      if (err.code === 11000) {
+        return next(new ConflictingError(EMAIL_ALREADY_REGISTERED));
+      }
+      if (err.name === 'ValidationError') {
+        return next(new BadRequestError(INCORRECT_UPDATE_USER_DATA));
+      }
+      return next(err);
     });
 };
 
 const login = (req, res, next) => {
   const { email, password } = req.body;
 
-  return User.findOne({ email })
-    .select('+password')
-    .orFail(() => next(new UnauthorizerError('Введены неправильные данные для входа')))
+  return User.findUserByCredentials(email, password)
     .then((user) => {
-      bcrypt.compare(String(password), user.password)
-        .then((isValidUser) => {
-          if (isValidUser) {
-            const token = jwt.sign(
-              { _id: user._id },
-              NODE_ENV === 'production' ? JWT_SECRET : 'dev-secret',
-              { expiresIn: '7d' },
-            );
-            res.cookie('token', token, {
-              maxAge: 3600000 * 24 * 7,
-              httpOnly: true,
-              sameSite: true,
-              secure: true,
-            }).send(user.toJSON());
-          } else {
-            next(new UnauthorizerError('Введены неправильные данные для входа'));
-          }
-        });
+      const token = jwt.sign(
+        { _id: user._id },
+        SECRET_KEY,
+        { expiresIn: '14d' },
+      );
+      res.send({ token });
     })
     .catch(next);
 };
 
-const signout = (req, res, next) => {
-  try {
-    res
-      .status(OK)
-      .clearCookie('token', {
-        sameSite: 'none',
-        secure: true,
-      })
-      .send({ message: 'Вы вышли из аккаунта' });
-  } catch (error) {
-    next(error);
-  }
-};
-
-const getUserInfo = (req, res, next) => {
-  User.findById(req.user._id)
-    .then((user) => {
-      if (!user) {
-        throw new NotFoundError('Пользователь по указанному ID не найден');
-      }
-      res.status(OK).send(user);
-    })
-    .catch((error) => {
-      if (error.name === 'CastError') {
-        next(new BadRequestError('Переданы некорректные данные'));
-      } else {
-        next(error);
-      }
-    });
-};
-
-const updateUser = (req, res, next) => {
-  const { email, name } = req.body;
-
-  User.findByIdAndUpdate(req.user._id, { email, name }, { new: true, runValidators: true })
-    .then((user) => {
-      if (!user) {
-        throw new NotFoundError('Пользователь с указанным ID не найден');
-      }
-      res.status(OK).send(user);
-    })
-    .catch((error) => {
-      if (error.name === 'ValidationError') {
-        next(new BadRequestError('Переданы некорректные данные при обновлении профиля'));
-      } else if (error.code === 11000) {
-        next(new ConflictingError('Пользователь с таким EMAIL уже существует'));
-      } else {
-        next(error);
-      }
-    });
-};
-
 module.exports = {
-  createUser,
+  registrationUser,
+  getCurrentUserInfo,
+  editProfileUserInfo,
   login,
-  signout,
-  getUserInfo,
-  updateUser,
 };
